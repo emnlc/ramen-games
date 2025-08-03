@@ -8,9 +8,12 @@ import docker
 from dotenv import load_dotenv
 import os
 
+import json
+
 load_dotenv()
 
 docker_client = docker.from_env()
+SERVER_LIST = "servers.json"
 TOKEN = os.getenv("TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -24,8 +27,10 @@ class Client(commands.Bot):
         print(f"Logged on as {self.user.name}!")
 
         try:
+            load_servers()
             guild = discord.Object(id=GUILD_ID)
             synced = await self.tree.sync(guild=guild)
+            await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{len(GAME_MAP)} Servers"))
             print(f"Synced {len(synced)} commands to guild: {guild.id}")
         except Exception as e:
             print(f"Error syncing commands: {e}")
@@ -34,6 +39,20 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = Client(command_prefix="!", intents=intents)
 guild = discord.Object(id=GUILD_ID)
+
+#######################
+# SERVER LIST HELPERS #
+#######################
+def load_servers():
+    try:
+        with open(SERVER_LIST, "r") as file:
+            GAME_MAP.update(json.load(file))
+    except (FileNotFoundError, json.JSONDecodeError):
+        GAME_MAP.clear()
+        
+def save_servers():
+    with open(SERVER_LIST, "w") as file:
+        json.dump(GAME_MAP, file)
 
 ######################
 ## START CONTAINERS ##
@@ -131,6 +150,10 @@ async def servers(interaction: discord.Interaction):
 #########################
 @client.tree.command(name="containers", description="List running containers", guild=guild)
 async def all_containers(interaction: discord.Interaction):
+    if interaction.user.id != ADMIN_ID:
+        await interaction.response.send_message("You cannot run this command", ephemeral=True)
+        return
+    
     containers = docker_client.containers.list()
     
     if not containers:
@@ -138,7 +161,7 @@ async def all_containers(interaction: discord.Interaction):
     else:
         response = "\n".join([f"**{container.name}**" for container in containers])
     
-    await interaction.response.send_message(f"Running Containers:\n{response}")
+    await interaction.response.send_message(f"Running Containers:\n{response}", ephemeral=True)
 
 ####################
 ## ADD NEW SERVER ##
@@ -155,6 +178,8 @@ async def add_server(interaction: discord.Interaction, game: str, container_name
     GAME_MAP[game.lower()] = container_name
     res = "\n".join([f"`{container_name}`" for container_name in GAME_MAP.values()])
     await interaction.response.send_message(f"**{game.upper()}** added to server list\n\n**Updated Server List**\n{res}", ephemeral=True)
+    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{len(GAME_MAP)} Servers"))
+    save_servers()
 
 ###################
 ## DELETE SERVER ##
@@ -172,5 +197,7 @@ async def delete_server(interaction: discord.Interaction, game: str):
     del GAME_MAP[game.lower()]
     res = "\n".join([f"`{container_name}`" for container_name in GAME_MAP.values()])
     await interaction.response.send_message(f"**{game.upper()}** deleted from server list\n\n**Updated Server List**\n{res}", ephemeral=True)
+    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"{len(GAME_MAP)} Servers"))
+    save_servers()
 
 client.run(TOKEN)
